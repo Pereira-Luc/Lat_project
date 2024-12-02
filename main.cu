@@ -13,7 +13,6 @@ __global__ void findMinWithRaceConditions(const int* d_arr, int n, int* d_min) {
     int localValue = d_arr[tid];
     if (localValue < *d_min) {
         *d_min = localValue; // Potential race condition
-        printf("Thread %d updated d_min to %d\n", tid, *d_min);
     }
 }
 
@@ -24,35 +23,27 @@ void stabilizeGlobalMin(const int* h_arr, int n, int& h_min) {
 
     // Allocate memory on the device
     cudaMalloc(&d_arr, n * sizeof(int));
-    printf("Allocated device memory for d_arr.\n");
     cudaMalloc(&d_min, sizeof(int));
-    printf("Allocated device memory for d_min.\n");
 
     // Copy data from host to device
     cudaMemcpy(d_arr, h_arr, n * sizeof(int), cudaMemcpyHostToDevice);
-    printf("Copied array from host to device.\n");
     cudaMemcpy(d_min, &h_min, sizeof(int), cudaMemcpyHostToDevice);
-    printf("Copied initial minimum value from host to device.\n");
 
     // Launch the kernel multiple times to stabilize the result
     const int blockSize = 1024;
     const int gridSize = (n + blockSize - 1) / blockSize;
 
     for (int iter = 0; iter < 10; ++iter) { // Fixpoint computation loop
-        printf("Launching kernel iteration %d.\n", iter + 1);
         findMinWithRaceConditions<<<gridSize, blockSize>>>(d_arr, n, d_min);
         cudaDeviceSynchronize(); // Synchronize between kernel launches
     }
 
     // Copy result back to host
     cudaMemcpy(&h_min, d_min, sizeof(int), cudaMemcpyDeviceToHost);
-    printf("Copied minimum value back to host.\n");
 
     // Free device memory
     cudaFree(d_arr);
-    printf("Freed device memory for d_arr.\n");
     cudaFree(d_min);
-    printf("Freed device memory for d_min.\n");
 }
 
 // Sequential Version
@@ -62,7 +53,6 @@ int find_array_min(int array[], int size) {
     for (int i = 1; i < size; i++) {
         if (array[i] < min) {
             min = array[i];
-            printf("Updated sequential min to %d at index %d.\n", min, i);
         }
     }
     return min;
