@@ -16,6 +16,33 @@ __global__ void findMinWithRaceConditions(const int* d_arr, int n, int* d_min) {
     }
 }
 
+__global__ void findMinCUDA(const int* d_arr, int n, int* d_min) {
+    extern __shared__ int sharedMin[]; 
+
+    int tid = threadIdx.x + blockIdx.x * blockDim.x; 
+    int localTid = threadIdx.x;                    
+
+    // Initialize shared memory
+    if (tid < n)
+        sharedMin[localTid] = d_arr[tid];
+    else
+        sharedMin[localTid] = INT_MAX; // For threads beyond array bounds
+    __syncthreads();
+
+    // Perform block-wide reduction to find minimum
+    for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (localTid < stride && tid + stride < n) {
+            sharedMin[localTid] = min(sharedMin[localTid], sharedMin[localTid + stride]);
+        }
+        __syncthreads();
+    }
+
+    // First thread of each block updates the global minimum
+    if (localTid == 0) {
+        atomicMin(d_min, sharedMin[0]);
+    }
+}
+
 // Host function to stabilize the result
 void stabilizeGlobalMin(const int* h_arr, int n, int& h_min) {
     int* d_arr;
@@ -83,7 +110,7 @@ int main() {
     printf("Starting CUDA minimum computation with race conditions.\n");
     stabilizeGlobalMin(h_arr, n, h_min);
 
-    printf("Minimum value (Race Conditions Allowed): %d", h_min);
+    printf("Minimum value (Race Conditions Allowed): %d\n", h_min);
 
     delete[] h_arr;
     printf("Freed host memory for array.\n");
