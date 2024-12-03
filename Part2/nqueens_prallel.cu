@@ -74,20 +74,20 @@ __global__ void parallel_propagate(bool *domain, const int *board, int depth, si
 // N-Queens node
 struct Node
 {
-  int depth;                             // Depth in the tree
-  std::vector<int> board;                // Board configuration (permutation)
-  std::vector<std::vector<bool>> domain; // Domain for each row
+    int depth;                            // Depth in the tree
+    std::vector<int> board;               // Board configuration (permutation)
+    std::vector<std::vector<char>> domain; // Domain for each row (using char)
 
-  Node(size_t N) : depth(0), board(N), domain(N, std::vector<bool>(N, true))
-  {
-    for (int i = 0; i < N; i++)
+    Node(size_t N) : depth(0), board(N), domain(N, std::vector<char>(N, true))
     {
-      board[i] = i; // Initialize board with default column indices
+        for (int i = 0; i < N; i++)
+        {
+            board[i] = i; // Initialize board with default column indices
+        }
     }
-  }
-  Node(const Node &) = default;
-  Node(Node &&) = default;
-  Node() = default;
+    Node(const Node &) = default;
+    Node(Node &&) = default;
+    Node() = default;
 };
 
 // Apply arbitrary inequalities
@@ -103,16 +103,16 @@ bool check_inequalities(const std::vector<int> &board, int row, int col,
   }
   return true;
 }
-bool propagate_domains(Node &node, size_t N)
+bool propagate_domains_parallel(Node &node, size_t N)
 {
     // Allocate device memory
-    bool *d_domain;
+    char *d_domain;
     int *d_board;
-    cudaMalloc(&d_domain, N * N * sizeof(bool));
+    cudaMalloc(&d_domain, N * N * sizeof(char));
     cudaMalloc(&d_board, N * sizeof(int));
 
     // Flatten the 2D domain vector
-    std::vector<bool> flattened_domain(N * N);
+    std::vector<char> flattened_domain(N * N);
     for (size_t i = 0; i < N; ++i)
     {
         for (size_t j = 0; j < N; ++j)
@@ -122,7 +122,7 @@ bool propagate_domains(Node &node, size_t N)
     }
 
     // Copy initial data to device
-    cudaMemcpy(d_domain, flattened_domain.data(), N * N * sizeof(bool), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_domain, flattened_domain.data(), N * N * sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(d_board, node.board.data(), N * sizeof(int), cudaMemcpyHostToDevice);
 
     // Define grid and block sizes
@@ -140,7 +140,7 @@ bool propagate_domains(Node &node, size_t N)
     }
 
     // Copy back to flattened 1D vector
-    cudaMemcpy(flattened_domain.data(), d_domain, N * N * sizeof(bool), cudaMemcpyDeviceToHost);
+    cudaMemcpy(flattened_domain.data(), d_domain, N * N * sizeof(char), cudaMemcpyDeviceToHost);
 
     // Reconstruct the 2D domain vector
     for (size_t i = 0; i < N; ++i)
