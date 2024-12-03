@@ -47,14 +47,16 @@ static bool no_column_zero_if_even_row(const std::vector<int> &board, int row, i
 
 __global__ void propagate_domains_kernel(bool *domain, int *board, int depth, size_t N)
 {
-    int row = blockIdx.x * blockDim.x + threadIdx.x; // Row index
-    int col = blockIdx.y * blockDim.y + threadIdx.y; // Column index
+    int row = blockIdx.x * blockDim.x + threadIdx.x; // Map thread to row
+    int col = blockIdx.y * blockDim.y + threadIdx.y; // Map thread to column
 
-    if (row >= depth && row < N && col < N) // Ensure valid indices
+    // Ensure the thread indices are within bounds
+    if (row >= depth && row < N && col < N)
     {
+        // Iterate over all previously placed queens
         for (int placed_row = 0; placed_row < depth; ++placed_row)
         {
-            int placed_col = board[placed_row]; // Column where a queen is already placed
+            int placed_col = board[placed_row]; // Column of the queen in `placed_row`
 
             // Remove column conflicts
             if (col == placed_col)
@@ -101,30 +103,33 @@ bool check_inequalities(const std::vector<int> &board, int row, int col,
 }
 bool propagate_domains(Node &node, size_t N)
 {
-    // Allocate device memory
+    // Allocate device memory for domain and board
     bool *d_domain;
     int *d_board;
     cudaMalloc(&d_domain, N * N * sizeof(bool));
     cudaMalloc(&d_board, N * sizeof(int));
 
     // Copy data to device
-    cudaMemcpy(d_domain, node.domain.data(), N * N * sizeof(bool), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_domain, &node.domain[0][0], N * N * sizeof(bool), cudaMemcpyHostToDevice);
     cudaMemcpy(d_board, node.board.data(), N * sizeof(int), cudaMemcpyHostToDevice);
 
-    // Define grid and block sizes
-    dim3 blockSize(16, 16); // Adjust based on the problem size
-    dim3 gridSize((N + blockSize.x - 1) / blockSize.x, (N + blockSize.y - 1) / blockSize.y);
+    // Define block and grid sizes dynamically based on N
+    int blockDimX = 16; // Threads per block in the X dimension (columns)
+    int blockDimY = 16; // Threads per block in the Y dimension (rows)
 
-    // Run kernel for a fixed number of iterations
-    const int max_iterations = 10; // Adjust based on the problem size
+    dim3 blockSize(blockDimX, blockDimY);
+    dim3 gridSize((N + blockDimX - 1) / blockDimX, (N + blockDimY - 1) / blockDimY);
+
+    // Fixed number of iterations for domain propagation
+    const int max_iterations = 10;
     for (int iter = 0; iter < max_iterations; ++iter)
     {
         propagate_domains_kernel<<<gridSize, blockSize>>>(d_domain, d_board, node.depth, N);
-        cudaDeviceSynchronize(); // Optional: Remove if exact synchronization isn't needed
+        cudaDeviceSynchronize(); // Ensure kernel execution is completed before next iteration
     }
 
-    // Copy results back to host
-    cudaMemcpy(node.domain.data(), d_domain, N * N * sizeof(bool), cudaMemcpyDeviceToHost);
+    // Copy the updated domain back to the host
+    cudaMemcpy(&node.domain[0][0], d_domain, N * N * sizeof(bool), cudaMemcpyDeviceToHost);
 
     // Free device memory
     cudaFree(d_domain);
