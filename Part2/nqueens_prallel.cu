@@ -105,56 +105,75 @@ bool check_inequalities(const std::vector<int> &board, int row, int col,
 }
 bool propagate_domains(Node &node, size_t N)
 {
-  // Allocate device memory
-  bool *d_domain;
-  int *d_board;
-  cudaMalloc(&d_domain, N * N * sizeof(bool));
-  cudaMalloc(&d_board, N * sizeof(int));
+    // Allocate device memory
+    bool *d_domain;
+    int *d_board;
+    cudaMalloc(&d_domain, N * N * sizeof(bool));
+    cudaMalloc(&d_board, N * sizeof(int));
 
-  // Copy initial data to device
-  cudaMemcpy(d_domain, &node.domain[0][0], N * N * sizeof(bool), cudaMemcpyHostToDevice);
-  cudaMemcpy(d_board, node.board.data(), N * sizeof(int), cudaMemcpyHostToDevice);
-
-  // Define grid and block sizes
-  int blockDimX = 16;
-  int blockDimY = 16;
-  dim3 blockSize(blockDimX, blockDimY);
-  dim3 gridSize((N + blockDimX - 1) / blockDimX, (N + blockDimY - 1) / blockDimY);
-
-  // Fixpoint loop
-  const int max_iterations = 10; // Set based on expected convergence
-  for (int iter = 0; iter < max_iterations; ++iter)
-  {
-    parallel_propagate<<<gridSize, blockSize>>>(d_domain, d_board, node.depth, N);
-    cudaDeviceSynchronize();
-  }
-
-  // Copy the final domain back to the host
-  cudaMemcpy(&node.domain[0][0], d_domain, N * N * sizeof(bool), cudaMemcpyDeviceToHost);
-
-  // Free device memory
-  cudaFree(d_domain);
-  cudaFree(d_board);
-
-  // Check if any row has an empty domain (indicating a dead-end)
-  for (int row = node.depth; row < N; ++row)
-  {
-    bool hasValidValue = false;
-    for (int col = 0; col < N; ++col)
+    // Flatten the 2D domain vector
+    std::vector<bool> flattened_domain(N * N);
+    for (size_t i = 0; i < N; ++i)
     {
-      if (node.domain[row][col])
-      {
-        hasValidValue = true;
-        break;
-      }
+        for (size_t j = 0; j < N; ++j)
+        {
+            flattened_domain[i * N + j] = node.domain[i][j];
+        }
     }
-    if (!hasValidValue)
-    {
-      return false; // Dead-end: No valid placements
-    }
-  }
 
-  return true; // Valid node
+    // Copy initial data to device
+    cudaMemcpy(d_domain, flattened_domain.data(), N * N * sizeof(bool), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_board, node.board.data(), N * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Define grid and block sizes
+    int blockDimX = 16;
+    int blockDimY = 16;
+    dim3 blockSize(blockDimX, blockDimY);
+    dim3 gridSize((N + blockDimX - 1) / blockDimX, (N + blockDimY - 1) / blockDimY);
+
+    // Fixpoint loop
+    const int max_iterations = 10; // Set based on expected convergence
+    for (int iter = 0; iter < max_iterations; ++iter)
+    {
+        parallel_propagate<<<gridSize, blockSize>>>(d_domain, d_board, node.depth, N);
+        cudaDeviceSynchronize();
+    }
+
+    // Copy back to flattened 1D vector
+    cudaMemcpy(flattened_domain.data(), d_domain, N * N * sizeof(bool), cudaMemcpyDeviceToHost);
+
+    // Reconstruct the 2D domain vector
+    for (size_t i = 0; i < N; ++i)
+    {
+        for (size_t j = 0; j < N; ++j)
+        {
+            node.domain[i][j] = flattened_domain[i * N + j];
+        }
+    }
+
+    // Free device memory
+    cudaFree(d_domain);
+    cudaFree(d_board);
+
+    // Check if any row has an empty domain (indicating a dead-end)
+    for (int row = node.depth; row < N; ++row)
+    {
+        bool hasValidValue = false;
+        for (int col = 0; col < N; ++col)
+        {
+            if (node.domain[row][col])
+            {
+                hasValidValue = true;
+                break;
+            }
+        }
+        if (!hasValidValue)
+        {
+            return false; // Dead-end: No valid placements
+        }
+    }
+
+    return true; // Valid node
 }
 
 // Evaluate and branch function with fixpoint domain propagation
