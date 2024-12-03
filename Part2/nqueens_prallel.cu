@@ -13,6 +13,7 @@
 #include <vector>
 #include <chrono>
 #include <stack>
+#include <cuda_runtime.h>
 
 // Static functions for inequalities
 static bool no_same_column(const std::vector<int> &board, int row, int col)
@@ -42,6 +43,28 @@ static bool no_same_diagonal(const std::vector<int> &board, int row, int col)
 static bool no_column_zero_if_even_row(const std::vector<int> &board, int row, int col)
 {
   return !(row % 2 == 0 && col == 0);
+}
+
+__global__ void propagate_domains_kernel(bool *domain, int *board, int depth, size_t N)
+{
+    int row = blockIdx.x * blockDim.x + threadIdx.x; // Row index
+    int col = blockIdx.y * blockDim.y + threadIdx.y; // Column index
+
+    if (row >= depth && row < N && col < N) // Ensure valid indices
+    {
+        for (int placed_row = 0; placed_row < depth; ++placed_row)
+        {
+            int placed_col = board[placed_row]; // Column where a queen is already placed
+
+            // Remove column conflicts
+            if (col == placed_col)
+                domain[row * N + col] = false;
+
+            // Remove diagonal conflicts
+            if (col == placed_col - (row - placed_row) || col == placed_col + (row - placed_row))
+                domain[row * N + col] = false;
+        }
+    }
 }
 
 // N-Queens node
@@ -76,47 +99,38 @@ bool check_inequalities(const std::vector<int> &board, int row, int col,
   }
   return true;
 }
-
-// Function to propagate domain reduction until a fixpoint is reached
 bool propagate_domains(Node &node, size_t N)
 {
-    bool updated;
-    do
+    // Allocate device memory
+    bool *d_domain;
+    int *d_board;
+    cudaMalloc(&d_domain, N * N * sizeof(bool));
+    cudaMalloc(&d_board, N * sizeof(int));
+
+    // Copy data to device
+    cudaMemcpy(d_domain, node.domain.data(), N * N * sizeof(bool), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_board, node.board.data(), N * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Define grid and block sizes
+    dim3 blockSize(16, 16); // Adjust based on the problem size
+    dim3 gridSize((N + blockSize.x - 1) / blockSize.x, (N + blockSize.y - 1) / blockSize.y);
+
+    // Run kernel for a fixed number of iterations
+    const int max_iterations = 10; // Adjust based on the problem size
+    for (int iter = 0; iter < max_iterations; ++iter)
     {
-        updated = false;
+        propagate_domains_kernel<<<gridSize, blockSize>>>(d_domain, d_board, node.depth, N);
+        cudaDeviceSynchronize(); // Optional: Remove if exact synchronization isn't needed
+    }
 
-        for (int row = 0; row < node.depth; ++row)
-        {
-            int col = node.board[row]; // Column where the queen is placed in `row`
+    // Copy results back to host
+    cudaMemcpy(node.domain.data(), d_domain, N * N * sizeof(bool), cudaMemcpyDeviceToHost);
 
-            // Propagate domain reduction to other rows
-            for (int i = row + 1; i < N; ++i)
-            {
-                // If the value is still in the domain, remove it and mark as updated
-                if (node.domain[i][col])
-                {
-                    node.domain[i][col] = false;
-                    updated = true;
-                }
+    // Free device memory
+    cudaFree(d_domain);
+    cudaFree(d_board);
 
-                // Remove diagonals
-                if (col - (i - row) >= 0 && node.domain[i][col - (i - row)])
-                {
-                    node.domain[i][col - (i - row)] = false;
-                    updated = true;
-                }
-
-                if (col + (i - row) < N && node.domain[i][col + (i - row)])
-                {
-                    node.domain[i][col + (i - row)] = false;
-                    updated = true;
-                }
-            }
-        }
-
-    } while (updated); // Continue until no updates are made
-
-    // Check if any row has an empty domain; this means the node is invalid
+    // Check if any row has an empty domain
     for (int row = node.depth; row < N; ++row)
     {
         bool hasValidValue = false;
