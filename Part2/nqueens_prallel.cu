@@ -103,7 +103,7 @@ bool check_inequalities(const std::vector<int> &board, int row, int col,
   }
   return true;
 }
-bool propagate_domains_parallel(Node &node, size_t N)
+bool propagate_domains(Node &node, size_t N)
 {
   // Allocate device memory
   bool *d_domain;
